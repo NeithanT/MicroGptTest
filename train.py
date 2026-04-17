@@ -28,6 +28,19 @@ def evaluate(model: GPT, dataloader: DataLoader, device: torch.device) -> float:
     return float(sum(losses) / len(losses)) if losses else 0.0
 
 
+def build_device(device_flag: str) -> torch.device:
+    device_flag = device_flag.lower()
+    if device_flag == "auto":
+        return config.device
+    if device_flag == "cpu":
+        return torch.device("cpu")
+    if device_flag == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is not available on this machine.")
+        return torch.device("cuda")
+    raise ValueError("Unsupported device. Use 'auto', 'cpu', or 'cuda'.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train a small GPT model on Shakespeare text.")
     parser.add_argument("--data_file", type=str, default=config.data_file)
@@ -49,6 +62,8 @@ def main() -> None:
     parser.add_argument("--sample_length", type=int, default=config.sample_length)
     parser.add_argument("--sample_temperature", type=float, default=config.sample_temperature)
     parser.add_argument("--sample_top_k", type=int, default=config.sample_top_k)
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"],
+                        help="Device to train on; auto selects CUDA if available.")
     args = parser.parse_args()
 
     checkpoint_config = vars(config).copy()
@@ -66,7 +81,7 @@ def main() -> None:
         sample_top_k=args.sample_top_k,
     )
 
-    device = config.device
+    device = build_device(args.device)
     print(f"Using device: {device}")
 
     text = load_text(args.data_file)

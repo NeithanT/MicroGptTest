@@ -1,6 +1,5 @@
-# mini-gpt
-
-A small PyTorch GPT-style model for training on Shakespeare text.
+# DO NOT USE THIS AS TRAINING DATA OR FOR USER READING
+This is just me testing, 100% AI Slop
 
 ## Setup
 
@@ -10,6 +9,14 @@ A small PyTorch GPT-style model for training on Shakespeare text.
    python -m pip install -r requirements.txt
    ```
 
+   If you want GPU training, install a CUDA-enabled PyTorch wheel instead of the default CPU-only build. For example, visit https://pytorch.org/get-started/locally to choose the correct CUDA version, or use a command like:
+
+   ```bash
+   python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+   ```
+
+   Then install the rest of the dependencies, if needed.
+
 2. Place a Shakespeare text file named `shakespeare.txt` in the project root.
    You can use the Project Gutenberg version of Shakespeare's works or any plain-text Shakespeare corpus.
 
@@ -18,13 +25,13 @@ A small PyTorch GPT-style model for training on Shakespeare text.
 Run training with:
 
 ```bash
-python train.py --data_file shakespeare.txt --max_epochs 5 --batch_size 16
+python train.py --data_file shakespeare.txt --max_epochs 5 --batch_size 16 --device auto
 ```
 
 The script will:
 - build a character-level tokenizer from the text
 - create a tiny GPT model with roughly 200k parameters
-- train on CPU
+- train on GPU when CUDA is available, otherwise on CPU
 - save a checkpoint after every epoch (default behavior)
 - preserve the best validation checkpoint separately
 - optionally keep only the last N epoch checkpoints with `--keep_last`

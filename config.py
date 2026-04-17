@@ -22,6 +22,6 @@ class Config:
     @property
     def device(self):
         import torch
-        return torch.device("cpu")
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 config = Config()
