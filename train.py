@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import cast
 
 import torch
-from torch.amp import GradScaler
+from torch.amp.autocast import autocast
+from torch.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 
 from config import config
@@ -18,14 +19,14 @@ def estimate_parameters(model: torch.nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def evaluate(model: torch.nn.Module, dataloader: DataLoader, device: torch.device, use_cuda: bool) -> float:
+def evaluate(model: GPT, dataloader: DataLoader, device: torch.device, use_cuda: bool) -> float:
     model.eval()
     losses = []
     with torch.no_grad():
         for x, y in dataloader:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            with torch.amp.autocast("cuda", enabled=use_cuda):
+            with autocast("cuda", enabled=use_cuda):
                 _, loss = model(x, y)
             losses.append(loss.item())
     return float(sum(losses) / len(losses)) if losses else 0.0
@@ -132,17 +133,18 @@ def main() -> None:
         for _, old_file in epoch_files[:-keep_last]:
             old_file.unlink(missing_ok=True)
 
-    model: torch.nn.Module = GPT(
+    model = GPT(
         vocab_size=len(tokenizer.vocab),
         block_size=args.block_size,
         n_layer=config.n_layer,
         n_head=config.n_head,
         n_embd=config.n_embd,
         dropout=config.dropout,
-    ).to(device)
+    )
+    model = cast(GPT, model.to(device))
 
     if args.compile_model and hasattr(torch, "compile"):
-        model = cast(torch.nn.Module, torch.compile(model))
+        model = cast(GPT, torch.compile(model))
 
     print(f"Vocab size: {len(tokenizer.vocab)}")
     print(f"Model parameters: {estimate_parameters(model):,}")
@@ -183,7 +185,7 @@ def main() -> None:
         for step, (x, y) in enumerate(train_loader, start=1):
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            with torch.amp.autocast("cuda", enabled=use_cuda):
+            with autocast("cuda", enabled=use_cuda):
                 logits, loss = model(x, y)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
