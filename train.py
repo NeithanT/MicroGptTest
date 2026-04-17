@@ -3,9 +3,10 @@ import os
 import re
 import time
 from pathlib import Path
+from typing import cast
 
 import torch
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch.utils.data import DataLoader
 
 from config import config
@@ -17,14 +18,14 @@ def estimate_parameters(model: torch.nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def evaluate(model: GPT, dataloader: DataLoader, device: torch.device, use_cuda: bool) -> float:
+def evaluate(model: torch.nn.Module, dataloader: DataLoader, device: torch.device, use_cuda: bool) -> float:
     model.eval()
     losses = []
     with torch.no_grad():
         for x, y in dataloader:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            with torch.cuda.amp.autocast(enabled=use_cuda):
+            with torch.amp.autocast("cuda", enabled=use_cuda):
                 _, loss = model(x, y)
             losses.append(loss.item())
     return float(sum(losses) / len(losses)) if losses else 0.0
@@ -131,7 +132,7 @@ def main() -> None:
         for _, old_file in epoch_files[:-keep_last]:
             old_file.unlink(missing_ok=True)
 
-    model = GPT(
+    model: torch.nn.Module = GPT(
         vocab_size=len(tokenizer.vocab),
         block_size=args.block_size,
         n_layer=config.n_layer,
@@ -141,14 +142,14 @@ def main() -> None:
     ).to(device)
 
     if args.compile_model and hasattr(torch, "compile"):
-        model = torch.compile(model)
+        model = cast(torch.nn.Module, torch.compile(model))
 
     print(f"Vocab size: {len(tokenizer.vocab)}")
     print(f"Model parameters: {estimate_parameters(model):,}")
     print(f"Dataset size: {len(dataset)} sequences")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=config.weight_decay)
-    scaler = GradScaler(enabled=use_cuda)
+    scaler = GradScaler(device="cuda", enabled=use_cuda)
 
     val_split = max(1, int(len(dataset) * 0.05))
     if len(dataset) > 2 * val_split:
@@ -182,7 +183,7 @@ def main() -> None:
         for step, (x, y) in enumerate(train_loader, start=1):
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            with torch.cuda.amp.autocast(enabled=use_cuda):
+            with torch.amp.autocast("cuda", enabled=use_cuda):
                 logits, loss = model(x, y)
             scaler.scale(loss).backward()
             scaler.step(optimizer)

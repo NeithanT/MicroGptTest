@@ -100,7 +100,7 @@ class GPT(nn.Module):
         return logits
 
     @torch.no_grad()
-    def generate(self, idx: torch.LongTensor, max_new_tokens: int, temperature: float = 1.0, top_k: int = None):
+    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_k: int = None):
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.block_size :]
             logits = self(idx_cond)
