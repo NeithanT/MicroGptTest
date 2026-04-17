@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import cast
 
 import torch
-from torch.amp.autocast import autocast
 from torch.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 
@@ -26,7 +25,7 @@ def evaluate(model: GPT, dataloader: DataLoader, device: torch.device, use_cuda:
         for x, y in dataloader:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            with autocast("cuda", enabled=use_cuda):
+            with torch.autocast("cuda", enabled=use_cuda):
                 _, loss = model(x, y)
             losses.append(loss.item())
     return float(sum(losses) / len(losses)) if losses else 0.0
@@ -185,7 +184,7 @@ def main() -> None:
         for step, (x, y) in enumerate(train_loader, start=1):
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
-            with autocast("cuda", enabled=use_cuda):
+            with torch.autocast("cuda", enabled=use_cuda):
                 logits, loss = model(x, y)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
