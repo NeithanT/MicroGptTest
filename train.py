@@ -65,6 +65,8 @@ def main() -> None:
     parser.add_argument("--sample_length", type=int, default=config.sample_length)
     parser.add_argument("--sample_temperature", type=float, default=config.sample_temperature)
     parser.add_argument("--sample_top_k", type=int, default=config.sample_top_k)
+    parser.add_argument("--stride", type=int, default=1,
+                        help="Step size between blocks in the training dataset. Use block_size for non-overlapping sequences.")
     parser.add_argument("--num_workers", type=int, default=4,
                         help="Number of DataLoader workers for background data loading.")
     parser.add_argument("--pin_memory", action="store_true", default=True,
@@ -84,6 +86,7 @@ def main() -> None:
         data_file=args.data_file,
         batch_size=args.batch_size,
         block_size=args.block_size,
+        stride=args.stride,
         max_epochs=args.max_epochs,
         learning_rate=args.learning_rate,
         save_path=args.save_path,
@@ -103,7 +106,7 @@ def main() -> None:
 
     text = load_text(args.data_file)
     tokenizer = CharTokenizer(text)
-    dataset = ShakespeareDataset(text, tokenizer, args.block_size)
+    dataset = ShakespeareDataset(text, tokenizer, args.block_size, stride=args.stride)
 
     save_best_path = args.save_best_path or f"{os.path.splitext(args.save_path)[0]}_best{os.path.splitext(args.save_path)[1] or '.pt'}"
 

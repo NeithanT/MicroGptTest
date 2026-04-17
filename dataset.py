@@ -29,17 +29,18 @@ def load_text(data_file: str) -> str:
 
 
 class ShakespeareDataset(Dataset):
-    def __init__(self, text: str, tokenizer: CharTokenizer, block_size: int):
+    def __init__(self, text: str, tokenizer: CharTokenizer, block_size: int, stride: int = 1):
         self.tokenizer = tokenizer
         self.block_size = block_size
+        self.stride = stride
         self.data = torch.tensor(self.tokenizer.encode(text), dtype=torch.long)
 
     def __len__(self) -> int:
-        return max(0, self.data.size(0) - self.block_size)
+        return max(0, (self.data.size(0) - self.block_size) // self.stride + 1)
 
     def __getitem__(self, idx: int):
-        start = idx
-        end = idx + self.block_size
+        start = idx * self.stride
+        end = start + self.block_size
         x = self.data[start:end]
         y = self.data[start + 1 : end + 1]
         return x, y
