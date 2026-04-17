@@ -14,9 +14,9 @@ class Config:
     sample_length: int = 200
     sample_temperature: float = 1.0
     sample_top_k: int = 30
-    n_layer: int = 2
-    n_head: int = 4
-    n_embd: int = 64
+    n_layer: int = 4
+    n_head: int = 8
+    n_embd: int = 192
     dropout: float = 0.1
 
     @property
