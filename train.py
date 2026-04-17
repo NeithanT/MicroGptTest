@@ -1,6 +1,8 @@
 import argparse
 import os
+import re
 import time
+from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
@@ -34,6 +36,14 @@ def main() -> None:
     parser.add_argument("--max_epochs", type=int, default=config.max_epochs)
     parser.add_argument("--learning_rate", type=float, default=config.learning_rate)
     parser.add_argument("--save_path", type=str, default=config.save_path)
+    parser.add_argument("--save_epoch_checkpoints", action="store_true", default=True,
+                        help="Save a checkpoint file after each epoch.")
+    parser.add_argument("--no_save_epoch_checkpoints", action="store_false", dest="save_epoch_checkpoints",
+                        help="Do not save checkpoint files after each epoch.")
+    parser.add_argument("--keep_last", type=int, default=0,
+                        help="Keep only the last N epoch checkpoints. 0 keeps all.")
+    parser.add_argument("--save_best_path", type=str, default=None,
+                        help="Optional path to save the best validation checkpoint separately.")
     parser.add_argument("--eval_interval", type=int, default=config.eval_interval)
     parser.add_argument("--eval_iters", type=int, default=config.eval_iters)
     parser.add_argument("--sample_length", type=int, default=config.sample_length)
@@ -41,13 +51,54 @@ def main() -> None:
     parser.add_argument("--sample_top_k", type=int, default=config.sample_top_k)
     args = parser.parse_args()
 
+    checkpoint_config = vars(config).copy()
+    checkpoint_config.update(
+        data_file=args.data_file,
+        batch_size=args.batch_size,
+        block_size=args.block_size,
+        max_epochs=args.max_epochs,
+        learning_rate=args.learning_rate,
+        save_path=args.save_path,
+        eval_interval=args.eval_interval,
+        eval_iters=args.eval_iters,
+        sample_length=args.sample_length,
+        sample_temperature=args.sample_temperature,
+        sample_top_k=args.sample_top_k,
+    )
+
     device = config.device
     print(f"Using device: {device}")
 
     text = load_text(args.data_file)
     tokenizer = CharTokenizer(text)
     dataset = ShakespeareDataset(text, tokenizer, args.block_size)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+
+    save_best_path = args.save_best_path or f"{os.path.splitext(args.save_path)[0]}_best{os.path.splitext(args.save_path)[1] or '.pt'}"
+
+    def save_checkpoint(path: str) -> None:
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "tokenizer": tokenizer.vocab,
+                "config": checkpoint_config,
+            },
+            path,
+        )
+
+    def cleanup_epoch_checkpoints(path: str, keep_last: int) -> None:
+        if keep_last <= 0:
+            return
+        base_name = os.path.splitext(os.path.basename(path))[0]
+        ext = os.path.splitext(path)[1]
+        parent = os.path.dirname(path) or "."
+        epoch_files = []
+        for epoch_file in Path(parent).glob(f"{base_name}_epoch_*{ext}"):
+            match = re.search(r"_epoch_(\d+)", epoch_file.name)
+            if match:
+                epoch_files.append((int(match.group(1)), epoch_file))
+        epoch_files.sort(key=lambda item: item[0])
+        for _, old_file in epoch_files[:-keep_last]:
+            old_file.unlink(missing_ok=True)
 
     model = GPT(
         vocab_size=len(tokenizer.vocab),
@@ -99,29 +150,22 @@ def main() -> None:
                 )
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    torch.save(
-                        {
-                            "model_state": model.state_dict(),
-                            "tokenizer": tokenizer.vocab,
-                            "config": vars(config),
-                        },
-                        args.save_path,
-                    )
-                    print(f"Saved best checkpoint to {args.save_path}")
+                    save_checkpoint(save_best_path)
+                    print(f"Saved best checkpoint to {save_best_path}")
 
         avg_epoch_loss = epoch_loss / len(train_loader)
         print(f"Epoch {epoch} complete | avg train loss {avg_epoch_loss:.4f}")
 
+        if args.save_epoch_checkpoints:
+            epoch_path = f"{os.path.splitext(args.save_path)[0]}_epoch_{epoch}{os.path.splitext(args.save_path)[1] or '.pt'}"
+            save_checkpoint(epoch_path)
+            print(f"Saved epoch checkpoint to {epoch_path}")
+            cleanup_epoch_checkpoints(args.save_path, args.keep_last)
+
     final_path = args.save_path
-    torch.save(
-        {
-            "model_state": model.state_dict(),
-            "tokenizer": tokenizer.vocab,
-            "config": vars(config),
-        },
-        final_path,
-    )
+    save_checkpoint(final_path)
     print(f"Training complete. Model saved to {final_path}")
+    print(f"Best validation checkpoint: {save_best_path}")
 
     prompt = "ROMEO:"
     context = torch.tensor([tokenizer.encode(prompt)], dtype=torch.long, device=device)
