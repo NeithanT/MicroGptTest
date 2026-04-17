@@ -3,7 +3,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     data_file: str = "shakespeare.txt"
-    batch_size: int = 16
+    batch_size: int = 64
     block_size: int = 256
     max_epochs: int = 10
     learning_rate: float = 3e-4

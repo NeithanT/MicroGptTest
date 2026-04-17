@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, n_embd: int, n_head: int, dropout: float):
+    def __init__(self, n_embd: int, n_head: int, dropout: float, block_size: int):
         super().__init__()
         assert n_embd % n_head == 0, "Embedding dim must be divisible by number of heads"
         self.n_head = n_head
@@ -13,7 +13,11 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(n_embd, n_embd)
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
-        self.register_buffer("mask", torch.tril(torch.ones(1, 1, 1, 1), diagonal=0), persistent=False)
+        self.register_buffer(
+            "mask",
+            torch.tril(torch.ones(1, 1, block_size, block_size, dtype=torch.bool)),
+            persistent=False,
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, C = x.size()
@@ -21,8 +25,8 @@ class CausalSelfAttention(nn.Module):
         q, k, v = [t.view(B, T, self.n_head, self.head_dim).transpose(1, 2) for t in qkv]
 
         att = (q @ k.transpose(-2, -1)) * (1.0 / self.head_dim ** 0.5)
-        mask = torch.tril(torch.ones(T, T, device=x.device, dtype=torch.bool))
-        att = att.masked_fill(~mask.unsqueeze(0), float("-inf"))
+        mask = self.mask[:, :, :T, :T]
+        att = att.masked_fill(~mask, float("-inf"))
         att = F.softmax(att, dim=-1)
         att = self.attn_dropout(att)
 
@@ -47,10 +51,10 @@ class MLP(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, n_embd: int, n_head: int, dropout: float):
+    def __init__(self, n_embd: int, n_head: int, dropout: float, block_size: int):
         super().__init__()
         self.ln1 = nn.LayerNorm(n_embd)
-        self.attn = CausalSelfAttention(n_embd, n_head, dropout)
+        self.attn = CausalSelfAttention(n_embd, n_head, dropout, block_size)
         self.ln2 = nn.LayerNorm(n_embd)
         self.mlp = MLP(n_embd, 4 * n_embd, dropout)
 
@@ -67,7 +71,7 @@ class GPT(nn.Module):
         self.tok_emb = nn.Embedding(vocab_size, n_embd)
         self.pos_emb = nn.Parameter(torch.zeros(1, block_size, n_embd))
         self.drop = nn.Dropout(dropout)
-        self.blocks = nn.Sequential(*[TransformerBlock(n_embd, n_head, dropout) for _ in range(n_layer)])
+        self.blocks = nn.Sequential(*[TransformerBlock(n_embd, n_head, dropout, block_size) for _ in range(n_layer)])
         self.ln_f = nn.LayerNorm(n_embd)
         self.head = nn.Linear(n_embd, vocab_size, bias=False)
 

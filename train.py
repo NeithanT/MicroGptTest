@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import torch
+from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 
 from config import config
@@ -16,14 +17,15 @@ def estimate_parameters(model: torch.nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def evaluate(model: GPT, dataloader: DataLoader, device: torch.device) -> float:
+def evaluate(model: GPT, dataloader: DataLoader, device: torch.device, use_cuda: bool) -> float:
     model.eval()
     losses = []
     with torch.no_grad():
         for x, y in dataloader:
-            x = x.to(device)
-            y = y.to(device)
-            _, loss = model(x, y)
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            with torch.cuda.amp.autocast(enabled=use_cuda):
+                _, loss = model(x, y)
             losses.append(loss.item())
     return float(sum(losses) / len(losses)) if losses else 0.0
 
@@ -62,6 +64,16 @@ def main() -> None:
     parser.add_argument("--sample_length", type=int, default=config.sample_length)
     parser.add_argument("--sample_temperature", type=float, default=config.sample_temperature)
     parser.add_argument("--sample_top_k", type=int, default=config.sample_top_k)
+    parser.add_argument("--num_workers", type=int, default=4,
+                        help="Number of DataLoader workers for background data loading.")
+    parser.add_argument("--pin_memory", action="store_true", default=True,
+                        help="Pin memory for faster host to GPU transfers.")
+    parser.add_argument("--no_pin_memory", action="store_false", dest="pin_memory",
+                        help="Disable pin_memory for DataLoader.")
+    parser.add_argument("--compile_model", action="store_true", default=True,
+                        help="Compile the model with torch.compile() when available.")
+    parser.add_argument("--no_compile_model", action="store_false", dest="compile_model",
+                        help="Disable torch.compile() even if available.")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"],
                         help="Device to train on; auto selects CUDA if available.")
     args = parser.parse_args()
@@ -82,6 +94,10 @@ def main() -> None:
     )
 
     device = build_device(args.device)
+    use_cuda = device.type == "cuda"
+    if use_cuda:
+        torch.backends.cudnn.benchmark = True
+
     print(f"Using device: {device}")
 
     text = load_text(args.data_file)
@@ -124,19 +140,37 @@ def main() -> None:
         dropout=config.dropout,
     ).to(device)
 
+    if args.compile_model and hasattr(torch, "compile"):
+        model = torch.compile(model)
+
     print(f"Vocab size: {len(tokenizer.vocab)}")
     print(f"Model parameters: {estimate_parameters(model):,}")
     print(f"Dataset size: {len(dataset)} sequences")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=config.weight_decay)
+    scaler = GradScaler(enabled=use_cuda)
 
     val_split = max(1, int(len(dataset) * 0.05))
     if len(dataset) > 2 * val_split:
         train_dataset, val_dataset = torch.utils.data.random_split(dataset, [len(dataset) - val_split, val_split])
     else:
         train_dataset, val_dataset = dataset, dataset
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_memory,
+        persistent_workers=args.num_workers > 0,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_memory,
+        persistent_workers=args.num_workers > 0,
+    )
 
     global_step = 0
     best_val_loss = float("inf")
@@ -146,18 +180,20 @@ def main() -> None:
         model.train()
         epoch_loss = 0.0
         for step, (x, y) in enumerate(train_loader, start=1):
-            x = x.to(device)
-            y = y.to(device)
-            logits, loss = model(x, y)
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            with torch.cuda.amp.autocast(enabled=use_cuda):
+                logits, loss = model(x, y)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
 
             epoch_loss += loss.item()
             global_step += 1
 
             if global_step % args.eval_interval == 0:
-                val_loss = evaluate(model, val_loader, device)
+                val_loss = evaluate(model, val_loader, device, use_cuda)
                 elapsed = time.time() - start_time
                 print(
                     f"step {global_step:>5} | epoch {epoch}/{args.max_epochs} | "
